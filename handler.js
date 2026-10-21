@@ -2,73 +2,50 @@ const fs = require('fs');
 const path = require('path');
 const config = require('./config');
 
-const commands = new Map();
-const commandPath = path.join(__dirname, 'commands');
+// ── IMPORT MODUL EKSKLUSIF STORY SNIFFER DI HEADER ──
+const storySniffer = require('./commands/exclusive/storysniff');
 
-// Fungsi rekursif membaca folder & sub-folder
-function loadCommands(dir) {
-    if (!fs.existsSync(dir)) return;
-    const files = fs.readdirSync(dir);
-
-    for (const file of files) {
-        const fullPath = path.join(dir, file);
-        const stat = fs.statSync(fullPath);
-
-        if (stat.isDirectory()) {
-            loadCommands(fullPath);
-        } else if (file.endsWith('.js')) {
-            try {
-                delete require.cache[require.resolve(fullPath)]; // Clear cache saat reload
-                const cmd = require(fullPath);
-                if (cmd && cmd.name) {
-                    const category = path.basename(path.dirname(fullPath));
-                    commands.set(cmd.name.toLowerCase(), { ...cmd, category });
-                }
-            } catch (e) {
-                console.error(`Gagal memuat file ${file}:`, e);
-            }
-        }
-    }
-}
-
-// Load semua commands saat pertama startup
-loadCommands(commandPath);
-
+// Fungsi utama penanganan pesan masuk
 async function handleMessage(sock, m) {
     try {
         if (!m.message) return;
 
-        // Mendapatkan isi teks dari berbagai tipe pesan
-        const messageType = Object.keys(m.message)[0];
-        let body = '';
+        // ── JALANKAN RADAR PENYADAP STORY DI LATAR BELAKANG ──
+        if (storySniffer && typeof storySniffer.listenStory === 'function') {
+            await storySniffer.listenStory(sock, m);
+        }
 
-        if (messageType === 'conversation') {
+        // Ambil pengirim dan isi pesan
+        const from = m.key.remoteJid;
+        const type = Object.keys(m.message)[0];
+        
+        let body = '';
+        if (type === 'conversation') {
             body = m.message.conversation;
-        } else if (messageType === 'extendedTextMessage') {
+        } else if (type === 'extendedTextMessage') {
             body = m.message.extendedTextMessage.text;
-        } else if (messageType === 'imageMessage') {
+        } else if (type === 'imageMessage') {
             body = m.message.imageMessage.caption || '';
-        } else if (messageType === 'videoMessage') {
+        } else if (type === 'videoMessage') {
             body = m.message.videoMessage.caption || '';
         }
 
-        if (!body) return;
-
-        // Cek prefix
+        // Deteksi Prefix
         const usedPrefix = config.prefixes.find(p => body.startsWith(p));
-        if (!usedPrefix) return;
+        if (!usedPrefix) return; // Jika bukan perintah, abaikan eksekusi command
 
-        const from = m.key.remoteJid;
         const args = body.slice(usedPrefix.length).trim().split(/ +/);
         const commandName = args.shift().toLowerCase();
 
-        const command = commands.get(commandName);
-        if (command) {
-            console.log(`[EXEC] Perintah '${commandName}' dari ${from}`);
-            await command.run(sock, m, from, args, commands, usedPrefix);
+        // Cari command di dalam global commandsMap
+        // (Pastikan variabel commandsMap sudah di-passing atau diakses secara global dari index.js)
+        if (global.commandsMap && global.commandsMap.has(commandName)) {
+            const command = global.commandsMap.get(commandName);
+            await command.run(sock, m, from, args, global.commandsMap, usedPrefix);
         }
+
     } catch (err) {
-        console.error("Error pada handler pesan:", err);
+        console.error("Error pada handler message:", err);
     }
 }
 
