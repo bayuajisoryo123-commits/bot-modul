@@ -1,0 +1,13 @@
+{
+  "name": "ravenji-bot-modular",
+  "version": "1.0.0",
+  "description": "WhatsApp Modular Bot for UserLAnd",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.5",
+    "pino": "^9.0.0"
+  }
+}
