@@ -1,11 +1,15 @@
 const fs = require('fs');
 const path = require('path');
+const readline = require('readline');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
-const qrcode = require('qrcode-terminal'); // Gunakan qrcode-terminal
 const { handleMessage } = require('./handler');
 
 global.commandsMap = new Map();
+
+// Helper untuk membaca input nomor HP dari terminal
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+const question = (text) => new Promise((resolve) => rl.question(text, resolve));
 
 // Fungsi rekursif muat modul
 function loadCommands(dir = path.join(__dirname, 'commands')) {
@@ -38,19 +42,27 @@ async function startBot() {
     
     const sock = makeWASocket({
         auth: state,
-        logger: pino({ level: 'silent' }) // printQRInTerminal dihapus agar tidak muncul warning
+        logger: pino({ level: 'silent' }),
+        browser: ["Ubuntu", "Chrome", "20.0.04"] // Browser identity agar pairing code lancar
     });
 
     sock.ev.on('creds.update', saveCreds);
 
-    // Menampilkan QR Code saat membutuhkan autentikasi
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, qr } = update;
+    // Fitur Pairing Code jika belum terautentikasi
+    if (!sock.authState.creds.registered) {
+        let phoneNumber = await question('\n📱 Masukkan nomor WhatsApp bot Anda (contoh: 6281234567890): ');
+        phoneNumber = phoneNumber.replace(/[^0-9]/g, ''); // Bersihkan dari spasi/karakter lain
 
-        if (qr) {
-            console.log('\n📱 SCAN QR CODE BERIKUT DENGAN WHATSAPP:\n');
-            qrcode.generate(qr, { small: true });
-        }
+        setTimeout(async () => {
+            let code = await sock.requestPairingCode(phoneNumber);
+            code = code?.match(/.{1,4}/g)?.join("-") || code;
+            console.log(`\n🔑 KODE PAIRING WHATSAPP ANDA: \x1b[32m${code}\x1b[0m\n`);
+            console.log('Masukkan kode di atas pada WhatsApp: Perangkat Tertaut > Tautkan dengan Nomor Telepon.\n');
+        }, 3000);
+    }
+
+    sock.ev.on('connection.update', (update) => {
+        const { connection, lastDisconnect } = update;
 
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
