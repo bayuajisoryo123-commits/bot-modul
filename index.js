@@ -26,7 +26,7 @@ async function startBot() {
     // Jika belum terhubung, minta pairing code via nomor HP
     if (!sock.authState.creds.registered) {
         // MASUKKAN NOMOR WHATSAPP ANDA DI SINI (Tanpa +, contoh: 628123456789)
-        const phoneNumber = "628123456789"; 
+        const phoneNumber = "6281217364460"; 
         
         // Beri jeda sejenak agar socket siap
         await钟 = new Promise(resolve => setTimeout(resolve, 3000));
