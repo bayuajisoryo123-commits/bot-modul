@@ -1,74 +1,71 @@
-import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers } from '@whiskeysockets/baileys';
-import { Boom } from '@hapi/boom';
-import pino from 'pino';
-import { handleMessage } from './handlers/messageHandler.js';
-import config from './config.js';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
+import readline from 'readline';
+
+const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+});
+
+const question = (text) => new Promise((resolve) => rl.question(text, resolve));
 
 async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState(config.sessionName);
-    const { version } = await fetchLatestBaileysVersion();
+    // Menyimpan sesi agar tidak perlu pairing ulang kedepannya
+    const { state, saveCreds } = await useMultiFileAuthState('sessions');
 
     const sock = makeWASocket({
-        version,
-        logger: pino({ level: 'silent' }),
         auth: state,
-        browser: Browsers.macOS("Desktop"),
-        connectTimeoutMs: 60000, // Perpanjang timeout koneksi
-        defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 10000
+        printQRInTerminal: false, // Matikan QR karena kita pakai Pairing Code
+    });
+
+    // Jika belum terdaftar, minta nomor HP untuk memunculkan Pairing Code
+    if (!sock.authState.creds.registered) {
+        const phoneNumber = await question('Masukkan nomor WhatsApp Anda (Contoh: 628123456789): \n');
+        
+        // Beri jeda sebentar agar socket siap
+        setTimeout(async () => {
+            try {
+                const code = await sock.requestPairingCode(phoneNumber.trim());
+                console.log(`\n========================================`);
+                console.log(`PAIRING CODE ANDA: ${code}`);
+                console.log(`========================================\n`);
+                console.log(`Masukkan kode ini di aplikasi WhatsApp Anda (Linked Devices -> Link with phone number).`);
+            } catch (error) {
+                console.error("Gagal mendapatkan pairing code:", error);
+            }
+        }, 3000);
+    }
+
+    // DIPERBAIKI: Menggunakan sock.ev.on, bukan sock.app.on
+    sock.ev.on('connection.update', (update) => {
+        const { connection, lastDisconnect } = update;
+        if (connection === 'close') {
+            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            console.log('Koneksi terputus, mencoba menghubungkan ulang...', shouldReconnect);
+            if (shouldReconnect) {
+                startBot();
+            }
+        } else if (connection === 'open') {
+            console.log('Bot WhatsApp berhasil terhubung!');
+            rl.close();
+        }
     });
 
     sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect } = update;
-        
-        if (connection === 'close') {
-            const statusCode = (lastDisconnect?.error instanceof Boom)?.output?.statusCode;
-            const errorMessage = lastDisconnect?.error?.message || 'Unknown error';
-            
-            console.log(`[DISCONNECT] Koneksi terputus. Status Code: ${statusCode}, Pesan: ${errorMessage}`);
+    // Contoh merespon pesan masuk
+    sock.ev.on('messages.upsert', async ({ messages }) => {
+        const m = messages[0];
+        if (!m.message || m.key.fromMe) return;
 
-            // Cek alasan diskoneksi khusus
-            if (statusCode === DisconnectReason.loggedOut) {
-                console.log('[INFO] Perangkat telah logout. Hapus folder sessions untuk pairing ulang.');
-                process.exit(0);
-            }
+        const messageContent = m.message.conversation || m.message.extendedTextMessage?.text;
+        const sender = m.key.remoteJid;
 
-            // Hubungkan ulang untuk semua error selain logout
-            console.log('[INFO] Menghubungkan ulang dalam 3 detik...');
-            setTimeout(() => {
-                startBot();
-            }, 3000);
+        console.log(`Pesan dari ${sender}: ${messageContent}`);
 
-        } else if (connection === 'open') {
-            console.log(`[INFO] Bot berhasil terhubung ke server WebSocket WhatsApp!`);
-
-            if (!sock.authState.creds.registered) {
-                // GANTI DENGAN NOMOR ANDA (Tanpa +, contoh: 628123456789)
-                const phoneNumber = "6281217364460"; 
-                
-                await new Promise(resolve => setTimeout(resolve, 3000));
-                
-                try {
-                    let code = await sock.requestPairingCode(phoneNumber);
-                    code = code?.match(/.{1,4}/g)?.join("-") || code;
-                    console.log(`\n=========================================`);
-                    console.log(`> KODE PAIRING WHATSAPP ANDA: ${code}`);
-                    console.log(`========================================-\n`);
-                } catch (err) {
-                    console.error('[ERROR] Gagal mendapatkan kode pairing:', err);
-                }
-            }
+        // Balas pesan otomatis
+        if (messageContent && messageContent.toLowerCase() === 'halo') {
+            await sock.sendMessage(sender, { text: 'Halo! Bot WhatsApp dengan Pairing Code aktif.' });
         }
-    });
-
-    sock.ev.on('messages.upsert', async ({ messages, type }) => {
-        if (type !== 'notify') return;
-        const mek = messages[0];
-        if (!mek.message || mek.key.fromMe) return;
-        
-        await handleMessage(sock, mek);
     });
 }
 
