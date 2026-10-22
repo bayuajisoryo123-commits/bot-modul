@@ -29,7 +29,7 @@ async function startBot() {
         const phoneNumber = "6281217364460"; 
         
         // Beri jeda sejenak agar socket siap
-        await钟 = new Promise(resolve => setTimeout(resolve, 3000));
+        await = new Promise(resolve => setTimeout(resolve, 3000));
         
         let code = await sock.requestPairingCode(phoneNumber);
         code = code?.match(/.{1,4}/g)?.join("-") || code;
