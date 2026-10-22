@@ -9,48 +9,57 @@ const rl = readline.createInterface({
 const question = (text) => new Promise((resolve) => rl.question(text, resolve));
 
 async function startBot() {
-    // Menyimpan sesi agar tidak perlu pairing ulang kedepannya
+    // 1. Tanyakan nomor HP terlebih dahulu SEBELUM membuat koneksi socket
+    const phoneNumber = await question('Masukkan nomor WhatsApp Anda (Contoh: 628123456789): \n');
+    if (!phoneNumber) {
+        console.log('Nomor tidak boleh kosong!');
+        process.exit(0);
+    }
+
+    console.log('\n[INFO] Menghubungkan ke server WhatsApp...');
+
     const { state, saveCreds } = await useMultiFileAuthState('sessions');
 
     const sock = makeWASocket({
         auth: state,
-        printQRInTerminal: false, // Matikan QR karena kita pakai Pairing Code
+        printQRInTerminal: false,
     });
 
-    // Jika belum terdaftar, minta nomor HP untuk memunculkan Pairing Code
-    if (!sock.authState.creds.registered) {
-        const phoneNumber = await question('Masukkan nomor WhatsApp Anda (Contoh: 628123456789): \n');
-        
-        // Beri jeda sebentar agar socket siap
-        setTimeout(async () => {
-            try {
-                const code = await sock.requestPairingCode(phoneNumber.trim());
-                console.log(`\n========================================`);
-                console.log(`PAIRING CODE ANDA: ${code}`);
-                console.log(`========================================\n`);
-                console.log(`Masukkan kode ini di aplikasi WhatsApp Anda (Linked Devices -> Link with phone number).`);
-            } catch (error) {
-                console.error("Gagal mendapatkan pairing code:", error);
-            }
-        }, 3000);
-    }
+    // Simpan kredensial
+    sock.ev.on('creds.update', saveCreds);
 
-    // DIPERBAIKI: Menggunakan sock.ev.on, bukan sock.app.on
-    sock.ev.on('connection.update', (update) => {
+    // 2. Tangani koneksi dan minta pairing code begitu socket terbuka
+    sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect } = update;
+        
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             console.log('Koneksi terputus, mencoba menghubungkan ulang...', shouldReconnect);
             if (shouldReconnect) {
+                // Jika terputus, kita jalankan ulang tapi pastikan nomor tidak ditanya ulang jika sudah ada sesi
                 startBot();
             }
         } else if (connection === 'open') {
-            console.log('Bot WhatsApp berhasil terhubung!');
+            console.log('[INFO] Bot WhatsApp berhasil terhubung ke server!');
             rl.close();
+
+            // Jika belum terdaftar, minta pairing code sekarang secara aman
+            if (!sock.authState.creds.registered) {
+                try {
+                    console.log('[INFO] Meminta Kode Pairing...');
+                    await new Promise(resolve => setTimeout(resolve, 2000)); // Jeda agar stabil
+                    
+                    const code = await sock.requestPairingCode(phoneNumber.trim());
+                    console.log(`\n========================================`);
+                    console.log(`> KODE PAIRING ANDA: ${code}`);
+                    console.log(`========================================\n`);
+                    console.log(`Masukkan kode ini di aplikasi WhatsApp Anda (Perangkat Tertaut -> Tautkan Perangkat -> Tautkan dengan nomor telepon saja).`);
+                } catch (error) {
+                    console.error("Gagal mendapatkan pairing code:", error);
+                }
+            }
         }
     });
-
-    sock.ev.on('creds.update', saveCreds);
 
     // Contoh merespon pesan masuk
     sock.ev.on('messages.upsert', async ({ messages }) => {
@@ -62,9 +71,8 @@ async function startBot() {
 
         console.log(`Pesan dari ${sender}: ${messageContent}`);
 
-        // Balas pesan otomatis
         if (messageContent && messageContent.toLowerCase() === 'halo') {
-            await sock.sendMessage(sender, { text: 'Halo! Bot WhatsApp dengan Pairing Code aktif.' });
+            await sock.sendMessage(sender, { text: 'Halo! Bot WhatsApp modular Anda aktif.' });
         }
     });
 }
