@@ -15,27 +15,13 @@ async function startBot() {
         browser: Browsers.macOS("Desktop")
     });
 
-    // Jika belum terhubung, minta pairing code via nomor HP
-    if (!sock.authState.creds.registered) {
-        // GANTI NOMOR DI BAWAH INI DENGAN NOMOR WHATSAPP ANDA (Tanpa +, contoh: 628123456789)
-        const phoneNumber = "6281217364460"; 
-        
-        // Beri jeda sejenak agar socket siap
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        
-        let code = await sock.requestPairingCode(phoneNumber);
-        code = code?.match(/.{1,4}/g)?.join("-") || code;
-        console.log(`\n=========================================`);
-        console.log(`> KODE PAIRING WHATSAPP ANDA: ${code}`);
-        console.log(`========================================-\n`);
-    }
-
     // Simpan kredensial saat diperbarui
     sock.ev.on('creds.update', saveCreds);
 
-    // Penanganan koneksi
-    sock.ev.on('connection.update', (update) => {
+    // Penanganan koneksi & Request Pairing Code setelah terkoneksi ke server WS
+    sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect } = update;
+        
         if (connection === 'close') {
             const shouldReconnect = (lastDisconnect?.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
             console.log('Koneksi terputus, menghubungkan ulang:', shouldReconnect);
@@ -43,7 +29,26 @@ async function startBot() {
                 startBot();
             }
         } else if (connection === 'open') {
-            console.log(`[INFO] Bot berhasil terhubung ke WhatsApp!`);
+            console.log(`[INFO] Bot berhasil terhubung ke server WebSocket WhatsApp!`);
+
+            // Jika belum terdaftar, minta pairing code setelah socket benar-benar terbuka
+            if (!sock.authState.creds.registered) {
+                // GANTI NOMOR DI BAWAH INI DENGAN NOMOR WHATSAPP ANDA (Tanpa +, contoh: 628123456789)
+                const phoneNumber = "6281217364460"; 
+                
+                // Beri jeda singkat agar stabil
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                try {
+                    let code = await sock.requestPairingCode(phoneNumber);
+                    code = code?.match(/.{1,4}/g)?.join("-") || code;
+                    console.log(`\n=========================================`);
+                    console.log(`> KODE PAIRING WHATSAPP ANDA: ${code}`);
+                    console.log(`========================================-\n`);
+                } catch (err) {
+                    console.error('[ERROR] Gagal mendapatkan kode pairing:', err);
+                }
+            }
         }
     });
 
